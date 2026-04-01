@@ -1,58 +1,109 @@
 # VectorWatch
 
-Real-time vector-borne disease surveillance dashboard. Aggregates data from CDC ArboNET, WHO GOARN, NIH PubMed, and NSF EcoHealth, with AI-synthesized insights via the Anthropic API.
+Real-time vector-borne disease surveillance dashboard for the United States. Aggregates data from CDC ArboNET, WHO GOARN, NIH PubMed, and NSF EcoHealth. Activity indices are seasonally adjusted by month. Historical case data goes back to 1999.
 
-🔗 **Live:** [vector-watch.vercel.app](https://vector-watch.vercel.app)
+🔗 **Live:** [vector-watch.vercel.app](https://vector-watch.vercel.app)  
+📁 **Related:** [pathogen-tracking](https://github.com/Vjp802/pathogen-tracking)
+
+---
+
+## Features
+
+| Feature | Status |
+|---|---|
+| US choropleth map — activity index by state | ✅ Live |
+| 8 vector-borne pathogens tracked | ✅ Live |
+| Season-aware risk logic (monthly multipliers) | ✅ Live |
+| Historical case charts (CDC data, 1999–2024) | ✅ Live |
+| CDC NNDSS weekly case data — West Nile, EEE, Dengue | ✅ Live |
+| Lyme disease — CDC 2023 annual state counts | ✅ Live |
+| WHO Disease Outbreak News RSS alerts | ✅ Live |
+| NIH PubMed literature surveillance | ✅ Live |
+| NSF / iNaturalist vector observation data | ✅ Live |
+| AI-synthesized insight (Anthropic API, server-side) | ✅ Live |
+| Auto-refresh every 6 hours (Vercel cron) | ✅ Live |
+| CSV + JSON export | ✅ Live |
+| Pathogen detail modal with trend + history | ✅ Live |
+| Regional sortable table (all 51 states) | ✅ Live |
+| Alert feed with severity filtering | ✅ Live |
+| Data sources tab with connection status | ✅ Live |
+
+---
+
+## How the activity index works
+
+Each state's activity index (0–100) is calculated in three steps:
+
+**1. Base index from CDC case data**
+- West Nile, EEE, Dengue: pulled from the NNDSS Weekly Data API (`data.cdc.gov/resource/x9gk-5huc.json`), normalized to cases per 100k population, then scaled against the historical peak rate for that disease
+- Lyme disease: uses CDC's 2023 confirmed + probable annual case counts by state, same normalization
+- States with no live data fall back to curated seed values based on historical burden
+
+**2. Seasonal adjustment**
+Each pathogen has a monthly multiplier (0.02–1.0) reflecting real entomological patterns:
+- Tick-borne diseases (Lyme, RMSF, Ehrlichiosis, Anaplasmosis): peak April–October, near-zero in winter
+- Mosquito-borne diseases (West Nile, Dengue, Zika): peak July–September
+- EEE: peaks late August–October
+
+The base index is multiplied by the current month's factor and floored at 5 so the map is never blank.
+
+**3. Display**
+The scaled index drives the map color scale:
+- 0–20: Low (light green)
+- 20–40: (medium green)
+- 40–60: Moderate (bright green)
+- 60–80: High (amber)
+- 80–100: Critical (red)
 
 ---
 
 ## How alerts work
 
-VectorWatch has two alert layers:
+Alerts come from two layers merged together:
 
-### 1. Seed alerts (current)
-The alerts currently displayed are **curated seed data** — representative examples based on real seasonal patterns and historically documented outbreaks (Lyme northeast corridor, RMSF in Oklahoma/Arkansas, West Nile Gulf Coast expansion). They are not pulled live from an institution in real time. They exist to demonstrate the alert feed structure and severity classification system.
+**Live alerts** (when available):
+- CDC Health Alert Network (HAN) RSS — filtered for vector-borne keywords
+- WHO Disease Outbreak News RSS — filtered for vector-borne keywords
+- NIH PubMed — recent publications on vector-borne disease
 
-### 2. Live adapter pipeline (in progress)
-The `adapters/` directory contains adapters for each data source that are wired to fetch real alerts:
+**Seed alerts** (baseline):
+- Curated representative alerts based on real historical outbreak patterns
+- Serve as a floor so the alert feed is never empty during quiet seasons
+- Live alerts are deduped against seed alerts by title and displayed first
 
-| Adapter | Source | Method | Status |
-|---|---|---|---|
-| `cdcAdapter.ts` | CDC ArboNET / HAN | CDC Health Alert Network RSS + data.cdc.gov Socrata API | Fallback to seed |
-| `whoAdapter.ts` | WHO GOARN | WHO Disease Outbreak News RSS feed | Parsing wired, filtering in progress |
-| `nihAdapter.ts` | NIH PubMed | NCBI E-utilities API (free, no key required) | Returns recent publications |
-| `nsfAdapter.ts` | NSF / iNaturalist | iNaturalist observation counts as vector density proxy | Returns observation alerts |
-
-When a live adapter returns results they are merged with the seed alerts, deduplicated by title, and displayed together. The seed alerts serve as a baseline so the dashboard is never empty.
-
-### Alert severity levels
-- **Critical** — confirmed fatalities, rapidly expanding outbreaks, or activity indices >80 in multiple states
+Alert severity levels:
+- **Critical** — confirmed fatalities, rapidly expanding outbreaks
 - **Warning** — elevated vector populations, early-season clusters, rising case counts
 - **Info** — travel advisories, research publications, vaccine trial updates
 
 ---
 
+## Historical data
+
+The Pathogen Detail modal includes a bar chart of national case counts sourced from CDC ArboNET finalized annual summaries:
+
+| Pathogen | Years available |
+|---|---|
+| West Nile Virus | 1999–2024 |
+| Lyme Disease | 2000–2023 |
+| Rocky Mountain Spotted Fever | 2000–2022 |
+| Dengue | 2010–2024 |
+| EEE | 2003–2024 |
+
+Data lives in `lib/historical.ts` and is updated manually when CDC publishes annual summaries.
+
+---
+
 ## Data sources
 
-**CDC ArboNET** — CDC Arboviral Diseases Branch national surveillance network. Tracks confirmed and probable arboviral disease cases across all 50 US states. Public data via [data.cdc.gov](https://data.cdc.gov) (Socrata API). Health alerts via the [Health Alert Network (HAN)](https://emergency.cdc.gov/han/).
-
-**WHO GOARN** — Global Outbreak Alert and Response Network. Monitors international vector-borne disease activity relevant to US border and travel health. Disease Outbreak News published at [who.int](https://www.who.int/emergencies/disease-outbreak-news) via RSS.
-
-**NIH PubMed** — NCBI E-utilities API scans PubMed for recent peer-reviewed publications on vector-borne disease trends and treatment outcomes. Free; add `NCBI_API_KEY` to `.env.local` for higher rate limits.
-
-**NSF EcoHealth / iNaturalist** — Citizen science tick and mosquito observation counts via [iNaturalist API](https://api.inaturalist.org/v1/), used as a proxy for regional vector density.
-
----
-
-## State activity index
-
-The activity index (0–100) on the map is currently **modeled seed data** based on historical CDC ArboNET case distribution patterns. It is designed to be replaced with live normalized case counts once the CDC API pipeline is fully wired.
-
----
-
-## AI insight
-
-The "Fetch" button calls the Anthropic API server-side (your key is never exposed to the browser). It sends the current surveillance context and returns a 2–3 sentence epidemiological synthesis, cached for 2 hours.
+| Source | API | What we use | Updates |
+|---|---|---|---|
+| **CDC NNDSS** | `data.cdc.gov/resource/x9gk-5huc.json` (Socrata, free) | West Nile, EEE, Dengue weekly case counts by state | Weekly |
+| **CDC Lyme** | Annual CSV (parsed into `lib/data.ts`) | Lyme confirmed + probable cases by state | Annually |
+| **CDC HAN** | `emergency.cdc.gov/han/rss.asp` | Vector-borne health alerts | As published |
+| **WHO GOARN** | `who.int/rss-feeds/news-releases-en.xml` | Disease Outbreak News alerts | As published |
+| **NIH PubMed** | NCBI E-utilities (free, optional key) | Recent vector-borne publications | Daily |
+| **NSF / iNaturalist** | `api.inaturalist.org/v1/` | Tick + mosquito observation counts | Weekly |
 
 ---
 
@@ -69,11 +120,22 @@ npm run dev
 
 ## Environment variables
 
-```
-ANTHROPIC_API_KEY=    # Required for AI Insight
-NCBI_API_KEY=         # Optional — increases PubMed rate limit
+```bash
+ANTHROPIC_API_KEY=    # Required — AI Insight button (server-side, never exposed)
+NCBI_API_KEY=         # Optional — increases PubMed rate limit from 3 to 10 req/sec
 CDC_API_KEY=          # Optional — CDC Data Modernization Initiative API
 ```
+
+## Deploy
+
+```bash
+npx vercel
+# Add ANTHROPIC_API_KEY in Vercel → Settings → Environment Variables
+```
+
+Vercel auto-refreshes data every 6 hours via the cron job in `vercel.json`.
+
+---
 
 ## Project structure
 
@@ -81,31 +143,41 @@ CDC_API_KEY=          # Optional — CDC Data Modernization Initiative API
 vectorwatch/
 ├── app/
 │   ├── api/
-│   │   ├── vector/route.ts     # Aggregates all adapters, 6hr cache
-│   │   └── insight/route.ts    # Server-side Anthropic call
+│   │   ├── vector/route.ts       # Aggregates all adapters, 6hr cache
+│   │   └── insight/route.ts      # Server-side Anthropic API call
 │   └── page.tsx
 ├── adapters/
-│   ├── IDataAdapter.ts
-│   ├── cdcAdapter.ts
-│   ├── whoAdapter.ts
-│   ├── nihAdapter.ts
-│   └── nsfAdapter.ts
+│   ├── IDataAdapter.ts           # Interface all adapters implement
+│   ├── cdcAdapter.ts             # CDC NNDSS Socrata + HAN RSS
+│   ├── whoAdapter.ts             # WHO DON RSS
+│   ├── nihAdapter.ts             # NIH PubMed E-utilities
+│   └── nsfAdapter.ts             # NSF / iNaturalist
 ├── components/
-│   ├── VectorDashboard.tsx
+│   ├── VectorDashboard.tsx       # Root client component + tab routing
+│   ├── TopBar.tsx
+│   ├── SeasonBadge.tsx           # Seasonal phase indicator
 │   ├── tabs/
-│   ├── map/USMap.tsx
+│   │   ├── OverviewTab.tsx       # Map + sparklines + alerts
+│   │   ├── PathogenTab.tsx       # Card grid → modal
+│   │   ├── RegionalTab.tsx       # Sortable state table
+│   │   ├── AlertsTab.tsx         # Full alert feed
+│   │   └── SourcesTab.tsx        # Source status + toggle
+│   ├── map/USMap.tsx             # D3 choropleth
 │   ├── charts/
-│   └── modals/PathogenModal.tsx
+│   │   ├── TrendChart.tsx        # 12-week national trend
+│   │   ├── SparkLine.tsx         # Per-pathogen sparkline
+│   │   └── HistoricalChart.tsx   # Multi-year bar chart
+│   └── modals/PathogenModal.tsx  # Detail modal with history + season
 └── lib/
-    ├── types.ts
-    ├── data.ts
-    └── cache.ts
+    ├── types.ts                  # Zod schemas + TypeScript types
+    ├── data.ts                   # Seed data + utility functions
+    ├── historical.ts             # CDC historical case data 1999–2024
+    ├── season.ts                 # Monthly seasonal multipliers
+    └── cache.ts                  # 6-hour in-memory cache
 ```
 
-## Related
-
-Spun out of [pathogen-tracking](https://github.com/Vjp802/pathogen-tracking) — compatible adapter architecture.
+---
 
 ## Disclaimer
 
-For informational and educational purposes only. Not intended as medical advice. For authoritative outbreak information consult [CDC](https://www.cdc.gov), [WHO](https://www.who.int), or your local health department.
+VectorWatch is for informational and educational purposes only. It is not intended to provide medical advice or replace official public health guidance. For authoritative outbreak information consult [CDC](https://www.cdc.gov), [WHO](https://www.who.int), or your local health department.
