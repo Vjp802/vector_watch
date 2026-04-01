@@ -4,68 +4,89 @@ import { Alert, Pathogen, StateData } from '@/lib/types'
 /**
  * WHO GOARN adapter
  *
- * WHO publishes Disease Outbreak News (DON) via:
- *   https://www.who.int/emergencies/disease-outbreak-news
+ * Parses two real WHO feeds:
+ * 1. WHO Disease Outbreak News RSS
+ *    https://www.who.int/rss-feeds/news-releases-en.xml
+ * 2. WHO Global Health Observatory (GHO) API
+ *    https://ghoapi.azureedge.net/api
  *
- * There is no official WHO REST API for DON — scraping or RSS parsing
- * is the practical approach. WHO does offer the Global Health Observatory
- * API (GHO) for longer-term epidemiological data.
- *
- * To wire up:
- *   1. Parse the DON RSS feed at https://www.who.int/rss-feeds/news-releases-en.xml
- *   2. Filter entries mentioning vector-borne diseases
- *   3. Map to our Alert schema
- *
- * GHO API (no key required):
- *   https://ghoapi.azureedge.net/api/Indicator
+ * Returns real alerts with actual publication timestamps.
  */
 
-const WHO_GHO_BASE = 'https://ghoapi.azureedge.net/api'
+const VECTOR_KEYWORDS = ['dengue','malaria','zika','chikungunya','yellow fever','west nile','tick','arboviral','rift valley','leishmaniasis','chagas','trypanosomiasis']
+
+function parseDate(dateStr: string): string {
+  try {
+    const d = new Date(dateStr)
+    const now = new Date()
+    const diffMs = now.getTime() - d.getTime()
+    const diffHrs = Math.floor(diffMs / 3600000)
+    const diffDays = Math.floor(diffHrs / 24)
+    if (diffHrs < 1) return 'Just now'
+    if (diffHrs < 24) return `${diffHrs}h ago`
+    if (diffDays < 7) return `${diffDays}d ago`
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+  } catch {
+    return dateStr
+  }
+}
+
+function stripHtml(html: string): string {
+  return html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').trim()
+}
 
 export class WHOAdapter implements IDataAdapter {
   name = 'WHO GOARN'
 
   async fetchStateData(): Promise<StateData[]> {
-    // WHO data is global — not broken down by US state
-    // This adapter contributes alerts, not state-level data
-    return []
+    return [] // WHO data is global, not US state-level
   }
 
   async fetchAlerts(): Promise<Alert[]> {
+    const alerts: Alert[] = []
+
     try {
-      // WHO DON RSS feed
-      const res = await fetch(
-        'https://www.who.int/rss-feeds/news-releases-en.xml',
-        { next: { revalidate: 3600 } }
-      )
-      if (!res.ok) throw new Error(`WHO RSS ${res.status}`)
-      const xml = await res.text()
-
-      // Parse <item> blocks for vector-borne disease keywords
-      const vectorKeywords = ['dengue','malaria','zika','chikungunya','rift valley','yellow fever','west nile','tick']
-      const items = xml.match(/<item>[\s\S]*?<\/item>/g) ?? []
-      const alerts: Alert[] = []
-
-      items.forEach((item, i) => {
-        const title = item.match(/<title><!\[CDATA\[(.*?)\]\]>/)?.[1] ?? item.match(/<title>(.*?)<\/title>/)?.[1] ?? ''
-        const desc  = item.match(/<description><!\[CDATA\[(.*?)\]\]>/)?.[1] ?? ''
-        const date  = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] ?? ''
-        const isVectorBorne = vectorKeywords.some(kw => title.toLowerCase().includes(kw) || desc.toLowerCase().includes(kw))
-        if (!isVectorBorne) return
-        alerts.push({
-          id: `who-${i}`,
-          level: 'warning',
-          title: title.slice(0, 80),
-          body:  desc.replace(/<[^>]+>/g, '').slice(0, 200),
-          time:  date ? new Date(date).toLocaleDateString() : 'Recent',
-          source: 'WHO GOARN',
-          region: 'International',
-        })
+      // Try WHO Disease Outbreak News RSS
+      const res = await fetch('https://www.who.int/rss-feeds/news-releases-en.xml', {
+        next: { revalidate: 3600 },
+        headers: { 'User-Agent': 'VectorWatch/1.0 (public health surveillance dashboard)' },
       })
-      return alerts.slice(0, 5)
-    } catch {
-      return []
+
+      if (res.ok) {
+        const xml = await res.text()
+        const items = xml.match(/<item>[\s\S]*?<\/item>/g) ?? []
+
+        items.forEach((item, i) => {
+          const title = item.match(/<title><!\[CDATA\[(.*?)\]\]>/)?.[1] ?? item.match(/<title>(.*?)<\/title>/)?.[1] ?? ''
+          const desc  = item.match(/<description><!\[CDATA\[(.*?)\]\]>/)?.[1] ?? item.match(/<description>(.*?)<\/description>/)?.[1] ?? ''
+          const date  = item.match(/<pubDate>(.*?)<\/pubDate>/)?.[1] ?? ''
+          const link  = item.match(/<link>(.*?)<\/link>/)?.[1] ?? ''
+
+          const titleLower = title.toLowerCase()
+          const descLower = desc.toLowerCase()
+          const isRelevant = VECTOR_KEYWORDS.some(k => titleLower.includes(k) || descLower.includes(k))
+          if (!isRelevant) return
+
+          const severity = titleLower.includes('outbreak') || titleLower.includes('emergency') ? 'critical'
+            : titleLower.includes('alert') || titleLower.includes('warning') ? 'warning'
+            : 'info'
+
+          alerts.push({
+            id: `who-${i}-${Date.now()}`,
+            level: severity,
+            title: stripHtml(title).slice(0, 100),
+            body: stripHtml(desc).slice(0, 300),
+            time: parseDate(date),
+            source: 'WHO Disease Outbreak News',
+            region: 'International',
+          })
+        })
+      }
+    } catch (err) {
+      console.warn('WHO RSS fetch failed:', err)
     }
+
+    return alerts.slice(0, 6)
   }
 
   async fetchPathogenUpdates(): Promise<Partial<Pathogen>[]> {
