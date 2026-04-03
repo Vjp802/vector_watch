@@ -45,7 +45,7 @@ export function HistoricalChart({ data, color, label, height = 140 }: Props) {
           legend: { display: false },
           tooltip: {
             callbacks: {
-              label: (ctx) => ` ${ctx.parsed.y.toLocaleString()} cases`,
+              label: (ctx) => ` ${(ctx.parsed.y ?? 0).toLocaleString()} cases`,
             },
           },
         },
